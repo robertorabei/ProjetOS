@@ -27,8 +27,8 @@ typedef struct {
    bool _manuel;
 } ChatArgs;
 
-char read_path[71];
-char write_path[71];
+char read_path[72];
+char write_path[72];
 SharedMemory *shared_mem = NULL;
 
 
@@ -62,7 +62,7 @@ void signal_handler(int sig) {
 bool valid_name(const char *name) {
    const char *invalid_char = "/-[]";
    
-   if (strlen(name) > MAX_NAME_LENGTH) {
+   if (strlen(name) > MAX_NAME_LENGTH-1) {
       fprintf(stderr, "Nom d'utilisateur doit avoir moins de 30 caractères.\n");
       exit(2);
    }
@@ -87,9 +87,9 @@ void parse_arguments(int argc, char *argv[], ChatArgs *args) {
       exit(1);
    }
 
-   strncpy(args->utilisateur, argv[1], MAX_NAME_LENGTH + 1);
+   strncpy(args->utilisateur, argv[1], MAX_NAME_LENGTH);
    valid_name(args->utilisateur);
-   strncpy(args->destinataire, argv[2], MAX_NAME_LENGTH + 1);
+   strncpy(args->destinataire, argv[2], MAX_NAME_LENGTH);
    valid_name(args->destinataire);
 
    args->_bot = false;
@@ -128,10 +128,14 @@ void write_to_shared_memory(const char *message) {
    }
 }
 
-void read_and_print_shared_memory(const ChatArgs *args) {
+void read_and_print_shared_memory(const ChatArgs args) {
    while (shared_mem->read_pos < shared_mem->write_pos) {
       char *message = shared_mem->buffer + shared_mem->read_pos;
-      printf("%s", message);
+        if (args._bot){
+            printf("[%s]: %s",args.destinataire, message);
+        } else {
+            printf("[\x1B[4m%s\x1B[0m]: %s", args.destinataire,message);
+        }
       shared_mem->read_pos += strlen(message) + 1;
    }
 
@@ -162,14 +166,7 @@ void read_process(ChatArgs args, const char *read_path, pid_t parent_pid) {
             }
 
          if (args._manuel) {
-            // Mode manuel : Écrire uniquement dans la mémoire partagée
-            char message[MAX_BUFFER + 50]; // Ajout d'espace supplémentaire pour le formatage
-            if (args._bot) {
-               snprintf(message, sizeof(message), "[%s]: %s", args.destinataire, buffer);
-            } else {
-                snprintf(message, sizeof(message), "[\x1B[4m%s\x1B[0m]: %s", args.destinataire, buffer);
-            }
-            write_to_shared_memory(message);
+            write_to_shared_memory(buffer);
             printf("\a"); 
          } else {
             if (args._bot) {
@@ -193,7 +190,11 @@ void write_process(ChatArgs args, const char *write_path, pid_t child_pid) {
    char buffer[MAX_BUFFER];
    while (1) {
       if (fgets(buffer, MAX_BUFFER, stdin) != NULL) {
-         write(fd_write, buffer, strlen(buffer));
+        ssize_t bytes_written = write(fd_write, buffer, strlen(buffer+1));
+        if (bytes_written == -1) {
+            perror("Erreur lors de l'écriture dans le pipe");
+            break;
+        }
          if (strcmp(buffer, "close\n") == 0) {
             kill(child_pid, SIGTERM);
             break;
@@ -204,7 +205,7 @@ void write_process(ChatArgs args, const char *write_path, pid_t child_pid) {
          fflush(stdout);
 
          if (args._manuel) {
-            read_and_print_shared_memory(&args);
+            read_and_print_shared_memory(args);
          }
       }
    }
