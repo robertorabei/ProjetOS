@@ -62,7 +62,7 @@ void signal_handler(int sig) {
 bool valid_name(const char *name) {
    const char *invalid_char = "/-[]";
    
-   if (strlen(name) > MAX_NAME_LENGTH-1) {
+   if (strlen(name) > MAX_NAME_LENGTH - 1) {
       fprintf(stderr, "Nom d'utilisateur doit avoir moins de 30 caractères.\n");
       exit(2);
    }
@@ -129,56 +129,54 @@ void write_to_shared_memory(const char *message) {
 }
 
 void read_and_print_shared_memory(const ChatArgs args) {
-   while (shared_mem->read_pos < shared_mem->write_pos) {
-      char *message = shared_mem->buffer + shared_mem->read_pos;
+    while (shared_mem->read_pos < shared_mem->write_pos) {
+        char *message = shared_mem->buffer + shared_mem->read_pos;
         if (args._bot){
-            printf("[%s]: %s",args.destinataire, message);
+            printf("[%s] %s",args.destinataire, message);
         } else {
-            printf("[\x1B[4m%s\x1B[0m]: %s", args.destinataire,message);
+            printf("[\x1B[4m%s\x1B[0m] %s", args.destinataire,message);
         }
-      shared_mem->read_pos += strlen(message) + 1;
-   }
+        shared_mem->read_pos += strlen(message) + 1;
+    }
 
-   if (shared_mem->is_full) {
-      shared_mem->write_pos = 0;
-      shared_mem->read_pos = 0;
-      shared_mem->is_full = false;
-   }
+    if (shared_mem->is_full) {
+       shared_mem->write_pos = 0;
+       shared_mem->read_pos = 0;
+       shared_mem->is_full = false;
+    }
 }
 
 void read_process(ChatArgs args, const char *read_path, pid_t parent_pid) {
    int fd_read = open(read_path, O_RDONLY);
    if (fd_read == -1) {
-      perror("Erreur dans le pipe de lecture.\n");
-      exit(4);
+      perror("Erreur lors de l'ouverture du pipe de lecture");
+      exit(EXIT_FAILURE);
    }
-
    char buffer[MAX_BUFFER];
+    
    while (1) {
-      ssize_t bytes_read = read(fd_read, buffer, MAX_BUFFER);
+      ssize_t bytes_read = read(fd_read, buffer, sizeof(buffer));
+      
       if (bytes_read > 0) {
          buffer[bytes_read] = '\0';
-
-            if (strcmp(buffer, "close\n") == 0) {
-               printf("%s a terminé le chat.\n", args.destinataire);
-               kill(parent_pid, SIGTERM);
-               break;
-            }
-
          if (args._manuel) {
-            write_to_shared_memory(buffer);
-            printf("\a"); 
+             printf("\a");
+             write_to_shared_memory(buffer);
          } else {
-            if (args._bot) {
-               printf("[%s]: %s", args.destinataire, buffer);
-         } else {
-            printf("[\x1B[4m%s\x1B[0m]: %s", args.destinataire, buffer);
-            }
+             if (args._bot) {
+                 printf("[%s] %s", args.destinataire, buffer);
+             } else {
+                 printf("[\x1B[4m%s\x1B[0m] %s", args.destinataire, buffer);
+             }
          }
+         fflush(stdout);
       }
-   }
-   close(fd_read);
+    }   
+    close(fd_read);
+
 }
+
+
 
 void write_process(ChatArgs args, const char *write_path, pid_t child_pid) {
    int fd_write = open(write_path, O_WRONLY);
@@ -190,17 +188,10 @@ void write_process(ChatArgs args, const char *write_path, pid_t child_pid) {
    char buffer[MAX_BUFFER];
    while (1) {
       if (fgets(buffer, MAX_BUFFER, stdin) != NULL) {
-        ssize_t bytes_written = write(fd_write, buffer, strlen(buffer+1));
-        if (bytes_written == -1) {
-            perror("Erreur lors de l'écriture dans le pipe");
-            break;
-        }
-         if (strcmp(buffer, "close\n") == 0) {
-            kill(child_pid, SIGTERM);
-            break;
-         }
+        ssize_t bytes_written = write(fd_write, buffer, strlen(buffer));
+
          if (!args._bot) {
-            printf("[\x1B[4m%s\x1B[0m]: %s", args.utilisateur, buffer);
+            printf("[\x1B[4m%s\x1B[0m] %s", args.utilisateur, buffer);
          }
          fflush(stdout);
 
