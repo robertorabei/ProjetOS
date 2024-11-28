@@ -1,0 +1,86 @@
+#!/usr/bin/bash
+
+# Valider les paramètres
+function validate_params() {
+    if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+        echo "chat-bot destinataire [pseudo]" >&2
+        exit 1
+    fi
+
+    DESTINATAIRE=$1
+    PSEUDO=${2:-bot}
+}
+
+# Gérer les commandes envoyées au bot
+function handle_command() {
+    local message="$1"
+    case "$message" in
+        "liste")
+            echo "$(ls)" >&"${chat[1]}"
+            ;;
+        "qui suis-je")
+            echo "$DESTINATAIRE" >&"${chat[1]}"
+            ;;
+        "au revoir")
+            exit 0 
+            ;;
+        li\ *)  # Lire un fichier
+            local file_name="${message#li }"
+            local full_path=$(realpath "$file_name" 2>/dev/null || echo "$file_name")
+            if [ -f "$full_path" ]; then           
+                while IFS= read -r line || [ -n "$line" ]; do
+                    echo "$line" >&"${chat[1]}"
+                done < "$full_path"
+
+            else
+                echo "Fichier introuvable : $full_path" >&"${chat[1]}"
+            fi
+            ;;
+        *)  # Commande inconnue
+            if [ -f "liste-bot.txt" ]; then
+                while IFS= read line; do
+                    local cmd=$(echo "$line" | awk '{print $1}')
+                    if [[ "$message" == "$cmd" ]]; then
+                        local response=$(echo "$line" | cut -d' ' -f2- | tr -d '\r' | xargs)
+                        echo "$response" >&"${chat[1]}"
+                        return
+                    fi
+                done < "liste-bot.txt"
+            fi
+            echo "🤖 ?" >&"${chat[1]}"
+            ;;
+    esac
+}
+
+# Exécuter le bot
+function run_chat_bot() {
+    local running=true
+    while $running; do
+        if read -r message <&"${chat[0]}"; then
+            # Extrait la commande en utilisant awk
+            local command
+            command=$(echo "$message" | awk -F'] ' '{print $2}')
+
+            # Vérifie si la commande est "au revoir" pour arrêter le bot
+            if [[ "$command" == "au revoir" ]]; then
+                running=false
+                break
+            fi
+
+            # Passe la commande à handle_command
+            handle_command "$command"
+        fi
+    done
+}
+
+# Validation des paramètres
+validate_params "$@"
+
+# Démarrage du programme `./chat` avec coproc
+coproc chat { ./chat "$PSEUDO" "$DESTINATAIRE" --bot; }
+
+# Nettoyage en cas d'interruption
+trap "kill $chat_PID; exit" INT TERM
+
+# Exécution du bot
+run_chat_bot
