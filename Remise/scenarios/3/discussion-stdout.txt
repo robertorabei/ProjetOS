@@ -1,0 +1,4 @@
+[alice] Bonjour bob
+[alice] ça...
+[bob] Tranquille, merci
+[alice] va ?

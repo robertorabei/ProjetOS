@@ -1,0 +1,2 @@
+[alice] Bonjour bob
+[alice] ça va ?

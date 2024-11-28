@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# scenario-chat utilisateur destinataire fichier-stdin [options]
+
+FIFODIR=$(mktemp -d)
+PIPE="$FIFODIR/scenario-pipe"
+mkfifo "$PIPE"
+
+./chat "$1" "$2" ${@:5:2} < "$PIPE" &
+CHAT_PID=$!
+
+while IFS= read -r ligne; do
+   sleep 2
+   trimmed="$(tr -d '\n' <<< "$ligne")"
+   if [[ "$trimmed" == "*" ]] ; then
+      sleep "$4"
+   elif [[ "$trimmed" == "^" ]] ; then
+      kill -s SIGINT "$CHAT_PID"
+   elif [[ "$trimmed" == "-" ]] ; then
+      echo -n "l"
+      for i in {1..4096}; do
+         echo -n "o"
+      done
+      echo "g"
+   else
+      echo -e "$trimmed"
+   fi
+done < "$3" > "$PIPE"
+
+rm "$PIPE"
+rm -r "$FIFODIR"
+

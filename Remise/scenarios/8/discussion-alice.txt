@@ -1,0 +1,6 @@
+qui suis-je
+li scenarios/8/lecture.txt
+test
+au revoir
+bon arrêt ?
+*

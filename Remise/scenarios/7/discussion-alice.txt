@@ -1,0 +1,6 @@
+bon
+euh
+PO
+info
+abc ; echo 'fail'
+*

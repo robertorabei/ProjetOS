@@ -1,0 +1,213 @@
+#!/bin/bash
+
+declare -i TEST_SUCCESS=0
+declare -i TEST_TOTAL=0
+
+
+echo "Démarrage des tests. Ceux-ci peuvent prendre quelques secondes pour éviter les aléas des accès concurrents."
+
+LOG=0
+DUREE=1
+
+while (( "$#" )); do
+   case $1 in
+      --log) # display Help
+         LOG=1
+         ;;
+      -t) # Enter a name
+         shift
+         if [[ -n "$1" ]]; then
+            DUREE="$1"
+         fi
+   esac
+   
+   shift
+done
+
+export LOG
+export DUREE
+
+echo -e "\t === Tests mode simple ===\n"
+
+TEST_TOTAL+=1
+echo -n "Test #$TEST_TOTAL (options manquantes)... "
+message="$(./chat 2>&1 > /dev/null | tr -d '\n')"
+if [[ "$message" == 'chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]' ]]; then
+   echo -e "\x1B[0;32mSuccès\x1B[0m"
+   TEST_SUCCESS+=1
+else
+   echo -e "\x1B[0;31mÉchec\x1B[0m"
+   echo "Un message d'erreur spécifique est attendu s'il manque les pseudos en paramètres. Cf Section 2.2."
+fi
+
+TEST_TOTAL+=1
+echo -n "Test #$TEST_TOTAL (2ème pseudo manquant)... "
+message="$(./chat alice 2>&1 > /dev/null | tr -d '\n')"
+if [[ "$message" == 'chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]' ]]; then
+   echo -e "\x1B[0;32mSuccès\x1B[0m"
+   TEST_SUCCESS+=1
+else
+   echo -e "\x1B[0;31mÉchec\x1B[0m"
+   echo "Un message d'erreur spécifique est attendu s'il manque les pseudos en paramètres. Cf Section 2.2."
+fi
+
+TEST_TOTAL+=1
+echo -n "Test #$TEST_TOTAL (longueur pseudos -- code de retour)... "
+code_retour="$(./chat alice booooooooooooooooooooooooooooob &>/dev/null ; echo $?)"
+if [[ "$code_retour" -eq 2 ]]; then
+   echo -e "\x1B[0;32mSuccès\x1B[0m"
+   TEST_SUCCESS+=1
+else
+   echo -e "\x1B[0;31mÉchec\x1B[0m"
+   echo "Les pseudos de plus de 30 caractères sont invalides. Cf Section 2.2."
+fi
+
+TEST_TOTAL+=1
+echo -n "Test #$TEST_TOTAL (caractères invalides pseudos)... "
+code_retour="$(./chat alice b/o/b &> /dev/null; echo $?)"
+if [[ "$code_retour" -eq 3 ]]; then
+   echo -e "\x1B[0;32mSuccès\x1B[0m"
+   TEST_SUCCESS+=1
+else
+   echo -e "\x1B[0;31mÉchec\x1B[0m"
+   echo "Les pseudos ne peuvent pas contenir n'importe quels caractères. Cf Section 2.2."
+fi
+
+####
+
+function tester_scenario() {
+   N=$1
+   TEST_TOTAL=$2
+   
+   fichier_resultat="$(mktemp)"
+   echo -e "\x1B[0;90mFichier temporaire '$fichier_resultat' créé.\x1B[0m"
+
+   ./scenario-chat alice bob "scenarios/$N/discussion-alice.txt" "$DUREE" &
+   ./scenario-chat bob alice "scenarios/$N/discussion-bob.txt" "$DUREE" ${@:3:2} \
+      | perl -pe 's/\x1B\[[0-9;]*m//g' | perl -pe 's/\a//g' \
+      > "$fichier_resultat"
+
+   if cmp -s "$fichier_resultat" "scenarios/$N/discussion-stdout.txt" ; then
+      echo -e "[Test $TEST_TOTAL] \x1B[0;32mSuccès\x1B[0m"
+      CODE_RETOUR=0
+   else
+      echo -e "[Test $TEST_TOTAL] \x1B[0;31mÉchec\x1B[0m"
+      echo "stdout observé (bob) | stdout attendu (bob)"
+      diff -y "$fichier_resultat" "scenarios/$N/discussion-stdout.txt"
+      CODE_RETOUR=1
+   fi
+
+   if [[ "$LOG" == "0" ]]; then
+      echo -e "\x1B[0;90mFichier temporaire '$fichier_resultat' supprimé.\x1B[0m"
+      rm "$fichier_resultat"
+   fi
+   
+   return $CODE_RETOUR
+}
+function tester_scenario_bot() {
+   N=$1
+   TEST_TOTAL=$2
+   
+   if [[ $# -gt 3 ]]; then
+      ./chat-bot alice "$3" &>/dev/null &
+      PSEUDO_BOT="$3"
+   else
+      ./chat-bot alice &>/dev/null &
+      PSEUDO_BOT="bot"
+   fi
+   
+   fichier_resultat="$(mktemp)"
+   echo -e "\x1B[0;90mFichier temporaire '$fichier_resultat' créé.\x1B[0m"
+
+   ./scenario-chat alice "$PSEUDO_BOT" "scenarios/$N/discussion-alice.txt" "$DUREE" --bot \
+      | perl -pe 's/\x1B\[[0-9;]*m//g' | perl -pe 's/\a//g' \
+      > "$fichier_resultat"
+
+   if cmp -s "$fichier_resultat" "scenarios/$N/discussion-stdout.txt" ; then
+      echo -e "[Test $TEST_TOTAL] \x1B[0;32mSuccès\x1B[0m"
+      CODE_RETOUR=0
+   else
+      echo -e "[Test $TEST_TOTAL] \x1B[0;31mÉchec\x1B[0m"
+      echo "stdout observé (alice) | stdout attendu (alice)"
+      diff -y "$fichier_resultat" "scenarios/$N/discussion-stdout.txt"
+      CODE_RETOUR=1
+   fi
+
+   if [[ "$LOG" == "0" ]]; then
+      echo -e "\x1B[0;90mFichier temporaire '$fichier_resultat' supprimé.\x1B[0m"
+      rm "$fichier_resultat"
+   fi
+   
+   return $CODE_RETOUR
+}
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 1] (discussion sans options)... "
+if tester_scenario 1 "$TEST_TOTAL" ; then
+   TEST_SUCCESS+=1
+fi
+
+echo -e "\t\n === Tests avec modes manuel & bot ===\n"
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 2] (discussion --manuel & ENTER)... "
+if tester_scenario 2 "$TEST_TOTAL" --manuel ; then
+   TEST_SUCCESS+=1
+fi
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 3] (discussion --manuel & Ctrl + C)... "
+if tester_scenario 3 "$TEST_TOTAL" --manuel ; then
+   TEST_SUCCESS+=1
+fi
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 5] (--bot)... "
+if tester_scenario 5 "$TEST_TOTAL" --bot ; then
+   TEST_SUCCESS+=1
+fi
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 6] (--bot --manuel)... "
+if tester_scenario 6 "$TEST_TOTAL" --bot --manuel ; then
+   TEST_SUCCESS+=1
+fi
+
+echo -e "\n\t === Tests du bot ===\n"
+
+if [[ ! -e "chat-bot" ]]; then
+   echo -e "\x1B[0;31mAttention, le script chat-bot n'existe pas. Pensez à retirer le '.sh' si vous en avez mis un.\x1B[0m"
+fi
+
+TEST_TOTAL+=1
+echo -n "Test #$TEST_TOTAL (paramètres manquants bot)... "
+message="$(./chat-bot 2>&1 1>/dev/null)"
+if [[ "$message" == "chat-bot destinataire [pseudo]" ]]; then
+   echo -e "\x1B[0;32mSuccès\x1B[0m"
+   TEST_SUCCESS+=1
+else
+   echo -e "\x1B[0;31mÉchec\x1B[0m"
+   echo "Un message d'erreur spécifique est attendu s'il manque des paramètres pour le bot. Cf Section 3.2."
+fi
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 7] (bot mots à compléter et inexistants)... "
+if tester_scenario_bot 7 "$TEST_TOTAL" ; then
+   TEST_SUCCESS+=1
+fi
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 7] (même que précédent mais avec un nom 'robot')... "
+if tester_scenario_bot 7 "$TEST_TOTAL" "robot" ; then
+   TEST_SUCCESS+=1
+fi
+
+
+TEST_TOTAL+=1
+echo "Test #$TEST_TOTAL [scenario 8] (test de commandes)... "
+if tester_scenario_bot 8 "$TEST_TOTAL" ; then
+   TEST_SUCCESS+=1
+fi
+
+
+echo -e "\n\n\t > Tests réussis : \x1B[0;32m$TEST_SUCCESS\x1B[0m / 13"

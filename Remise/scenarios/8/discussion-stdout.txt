@@ -1,0 +1,4 @@
+[bot] alice
+[bot] La mascotte du noyau Linux
+[bot] s'appelle Tux
+[bot] 🤖 ?

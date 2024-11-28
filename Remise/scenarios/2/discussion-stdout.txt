@@ -1,0 +1,3 @@
+[bob] Tranquille, merci
+[alice] Bonjour bob
+[alice] ça va ?
