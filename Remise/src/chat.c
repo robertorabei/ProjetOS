@@ -28,6 +28,7 @@ typedef struct {
    bool _manuel;
 } ChatArgs;
 
+// Variables globales indispensable au fonctionnement du code
 char read_path[72];
 char write_path[72];
 SharedMemory *shared_mem = NULL;
@@ -37,7 +38,7 @@ pid_t parent_pid = -1;
 // Variable globale pour les arguments de chat
 ChatArgs global_args;
 
-// Déclaration de la fonction avant son utilisation
+// Déclaration de la fonction avant son utilisation 
 void read_and_print_shared_memory(const ChatArgs args);
 
 // Gestionnaire de signaux
@@ -78,7 +79,7 @@ bool valid_name(const char *name) {
    return true;
 }
 
-// Fonction pour analyser les arguments
+// Fonction pour analyser les arguments et les mettre en variables 
 void parse_arguments(int argc, char *argv[], ChatArgs *args) {
    if (argc < 3) {
       fprintf(stderr, "chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]\n");
@@ -112,14 +113,11 @@ void create_pipe(const char *path) {
 // Fonction pour écrire dans la mémoire partagée
 void write_to_shared_memory(const char *message) {
    size_t message_len = strlen(message);
-   
-   if (message_len + 1 > SHARED_MEM_SIZE) {
-      fprintf(stderr, "Message trop long pour être stocké.\n");
-      return;
-   }
 
+      
    if (shared_mem->is_full || shared_mem->write_pos + message_len + 1 > SHARED_MEM_SIZE) {
       shared_mem->is_full = true;
+      read_and_print_shared_memory(global_args); // Lire et afficher tous les messages si mémoire dépassée 
    }
 
    if (!shared_mem->is_full) {
@@ -132,9 +130,7 @@ void write_to_shared_memory(const char *message) {
 void read_and_print_shared_memory(const ChatArgs args) {
     // Tant qu'il y a des messages à lire dans la mémoire partagée
     while (shared_mem->read_pos < shared_mem->write_pos) {
-        // Récupération du message à lire
         char *message = shared_mem->buffer + shared_mem->read_pos;
-        
         // Affichage du message avec ou sans le mode bot
         if (!args._bot) {
             printf("[\x1B[4m%s\x1B[0m] %s", args.destinataire, message);
@@ -169,6 +165,7 @@ void read_process(ChatArgs args, const char *read_path, pid_t parent_pid) {
       
       if (bytes_read > 0) {
          buffer[bytes_read] = '\0';
+         //Gestion pour chaque cas
          if (args._manuel || (args._manuel && args._bot)) {
              printf("\a");
              write_to_shared_memory(buffer);
@@ -181,6 +178,7 @@ void read_process(ChatArgs args, const char *read_path, pid_t parent_pid) {
             fflush(stdout);
          }
       }
+      // Equivalent du SIGPIPE mais plus éfficace pour notre cas 
       else if (bytes_read == 0) {
          kill(parent_pid, SIGTERM);
          break;
@@ -199,33 +197,33 @@ void write_process(ChatArgs args, const char *write_path, pid_t child_pid) {
 
     char buffer[MAX_BUFFER];
     while (1) {
-
-        if (fgets(buffer, MAX_BUFFER, stdin) == NULL) {
+         //
+         if (fgets(buffer, MAX_BUFFER, stdin) == NULL) {
             break;
-        }
+         }
+         // Écriture dans le pipe
+         ssize_t bytes_written = write(fd_write, buffer, strlen(buffer));
+         if (bytes_written == -1) {
+         break;
+         }
 
-        // Écriture dans le pipe
-        ssize_t bytes_written = write(fd_write, buffer, strlen(buffer));
-        if (bytes_written == -1) {
-            break;
-        }
-
-        if (!args._bot){
+         if (!args._bot){
             printf("[\x1B[4m%s\x1B[0m] %s", args.utilisateur, buffer);
-        }
-        fflush(stdout);
+         }
+         fflush(stdout);
 
-        // Gestion du mode manuel (affichage des messages en mémoire partagée)
-        if (args._manuel) {
+         // Gestion du mode manuel (affichage des messages en mémoire partagée)
+         if (args._manuel) {
             read_and_print_shared_memory(args);
-        }
-    }
+         }
+      }
    close(fd_write);
    kill(child_pid, SIGTERM);
 }
 
 // Fonction principale
 int main(int argc, char *argv[]) {
+   // Interception des signaux
    signal(SIGTERM, signal_handler);
    signal(SIGINT, signal_handler);
    
@@ -241,7 +239,8 @@ int main(int argc, char *argv[]) {
 
    create_pipe(read_path);
    create_pipe(write_path);
-   
+
+   //Si manuel, on crée une mémoire partagée avec shm 
    if (args._manuel) {
       shared_mem = mmap(NULL, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
       if (shared_mem == MAP_FAILED) {
@@ -261,6 +260,7 @@ int main(int argc, char *argv[]) {
       exit(4);
    }
 
+   //Répartition des tâches pour chaque processus
    if (child_pid == 0) {
       read_process(args, read_path, parent_pid);
    } else {
