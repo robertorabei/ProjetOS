@@ -13,6 +13,7 @@
 #define MAX_BUFFER 100
 #define SHARED_MEM_SIZE 4096
 
+// Structures pour la mémoire partagée et les arguments de chat
 typedef struct {
    char buffer[SHARED_MEM_SIZE];  
    size_t write_pos;             
@@ -30,35 +31,31 @@ typedef struct {
 char read_path[72];
 char write_path[72];
 SharedMemory *shared_mem = NULL;
+pid_t child_pid = -1;
+pid_t parent_pid = -1;
 
+// Variable globale pour les arguments de chat
+ChatArgs global_args;
 
+// Déclaration de la fonction avant son utilisation
+void read_and_print_shared_memory(const ChatArgs args);
+
+// Gestionnaire de signaux
 void signal_handler(int sig) {
-   
    if (sig == SIGTERM) {
       unlink(read_path);
       unlink(write_path); 
-      if (shared_mem) {
-         munmap(shared_mem, sizeof(SharedMemory));
-      }
       exit(0);
-
-   } else if (sig == SIGINT) {
+   } 
+   else if (sig == SIGINT) {
+      // Appeler la fonction pour lire et afficher les messages non lus
       if (shared_mem) {
-         while (shared_mem->read_pos < shared_mem->write_pos) {
-            char *message = shared_mem->buffer + shared_mem->read_pos;
-            printf("%s", message);
-            shared_mem->read_pos += strlen(message) + 1;
-         }
-         if (shared_mem->is_full) {
-            shared_mem->write_pos = 0;
-            shared_mem->read_pos = 0;
-            shared_mem->is_full = false;
-         }
+         read_and_print_shared_memory(global_args);  // Utiliser la variable globale
       }
    }
 }
 
-
+// Fonction pour valider le nom d'utilisateur
 bool valid_name(const char *name) {
    const char *invalid_char = "/-[]";
    
@@ -81,6 +78,7 @@ bool valid_name(const char *name) {
    return true;
 }
 
+// Fonction pour analyser les arguments
 void parse_arguments(int argc, char *argv[], ChatArgs *args) {
    if (argc < 3) {
       fprintf(stderr, "chat pseudo_utilisateur pseudo_destinataire [--bot] [--manuel]\n");
@@ -103,6 +101,7 @@ void parse_arguments(int argc, char *argv[], ChatArgs *args) {
    }
 }
 
+// Fonction pour créer un pipe
 void create_pipe(const char *path) {
    if (mkfifo(path, 0666) == -1 && errno != EEXIST) {
       perror("Erreur lors de la création des pipes.\n");
@@ -110,6 +109,7 @@ void create_pipe(const char *path) {
    }
 }
 
+// Fonction pour écrire dans la mémoire partagée
 void write_to_shared_memory(const char *message) {
    size_t message_len = strlen(message);
    
@@ -128,24 +128,34 @@ void write_to_shared_memory(const char *message) {
    }
 }
 
+// Fonction pour lire et afficher la mémoire partagée
 void read_and_print_shared_memory(const ChatArgs args) {
+    // Tant qu'il y a des messages à lire dans la mémoire partagée
     while (shared_mem->read_pos < shared_mem->write_pos) {
+        // Récupération du message à lire
         char *message = shared_mem->buffer + shared_mem->read_pos;
-        if (args._bot){
-            printf("[%s] %s",args.destinataire, message);
+        
+        // Affichage du message avec ou sans le mode bot
+        if (!args._bot) {
+            printf("[\x1B[4m%s\x1B[0m] %s", args.destinataire, message);
         } else {
-            printf("[\x1B[4m%s\x1B[0m] %s", args.destinataire,message);
+            printf("[%s] %s", args.destinataire, message);
         }
+        fflush(stdout);
+
+        // Avancer la position de lecture après avoir affiché le message
         shared_mem->read_pos += strlen(message) + 1;
     }
 
-    if (shared_mem->is_full) {
-       shared_mem->write_pos = 0;
-       shared_mem->read_pos = 0;
-       shared_mem->is_full = false;
+    // Réinitialiser les positions de lecture et d'écriture après avoir tout affiché
+    if (shared_mem->read_pos >= shared_mem->write_pos) {
+        shared_mem->write_pos = 0;
+        shared_mem->read_pos = 0;
+        shared_mem->is_full = false;  // Réinitialiser l'état de la mémoire partagée
     }
 }
 
+// Processus de lecture
 void read_process(ChatArgs args, const char *read_path, pid_t parent_pid) {
    int fd_read = open(read_path, O_RDONLY);
    if (fd_read == -1) {
@@ -159,50 +169,63 @@ void read_process(ChatArgs args, const char *read_path, pid_t parent_pid) {
       
       if (bytes_read > 0) {
          buffer[bytes_read] = '\0';
-         if (args._manuel) {
+         if (args._manuel || (args._manuel && args._bot)) {
              printf("\a");
              write_to_shared_memory(buffer);
          } else {
              if (args._bot) {
                  printf("[%s] %s", args.destinataire, buffer);
+                 fflush(stdout);
              } else {
                  printf("[\x1B[4m%s\x1B[0m] %s", args.destinataire, buffer);
              }
+            fflush(stdout);
          }
-         fflush(stdout);
+      }
+      else if (bytes_read == 0) {
+         kill(parent_pid, SIGTERM);
+         break;
       }
     }   
     close(fd_read);
-
 }
 
-
-
+// Processus d'écriture
 void write_process(ChatArgs args, const char *write_path, pid_t child_pid) {
-   int fd_write = open(write_path, O_WRONLY);
-   if (fd_write == -1) {
-      perror("Erreur dans le pipe d'écriture.\n");
-      exit(4);
-   }
+    int fd_write = open(write_path, O_WRONLY);
+    if (fd_write == -1) {
+        perror("Erreur dans le pipe d'écriture.\n");
+        exit(4);
+    }
 
-   char buffer[MAX_BUFFER];
-   while (1) {
-      if (fgets(buffer, MAX_BUFFER, stdin) != NULL) {
+    char buffer[MAX_BUFFER];
+    while (1) {
+
+        if (fgets(buffer, MAX_BUFFER, stdin) == NULL) {
+            break;
+        }
+
+        // Écriture dans le pipe
         ssize_t bytes_written = write(fd_write, buffer, strlen(buffer));
+        if (bytes_written == -1) {
+            break;
+        }
 
-         if (!args._bot) {
+        if (!args._bot){
             printf("[\x1B[4m%s\x1B[0m] %s", args.utilisateur, buffer);
-         }
-         fflush(stdout);
+        }
+        fflush(stdout);
 
-         if (args._manuel) {
+        // Gestion du mode manuel (affichage des messages en mémoire partagée)
+        if (args._manuel) {
             read_and_print_shared_memory(args);
-         }
-      }
-   }
+        }
+    }
    close(fd_write);
+   kill(child_pid, SIGTERM);
 }
 
+// Fonction principale
 int main(int argc, char *argv[]) {
    signal(SIGTERM, signal_handler);
    signal(SIGINT, signal_handler);
@@ -211,9 +234,12 @@ int main(int argc, char *argv[]) {
    
    parse_arguments(argc, argv, &args);
    
+   // Affecter les arguments globaux pour pouvoir les utiliser dans le gestionnaire de signaux
+   global_args = args;
+   
    snprintf(read_path, sizeof(read_path), "/tmp/%s-%s.chat", args.destinataire, args.utilisateur);
    snprintf(write_path, sizeof(write_path), "/tmp/%s-%s.chat", args.utilisateur, args.destinataire);
-   
+
    create_pipe(read_path);
    create_pipe(write_path);
    
@@ -251,4 +277,3 @@ int main(int argc, char *argv[]) {
    
    return 0;
 }
-
